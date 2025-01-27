@@ -1,0 +1,82 @@
+- name: Установка необходимых пакетов
+  apt:
+    name:
+      - git
+      - docker.io
+    state: present
+    update_cache: yes
+
+- name: Определение типа сети (NAT/VLAN)
+  shell: |
+    ip route | grep -q "default via" && echo "nat" || echo "vlan"
+  register: network_type
+  changed_when: false
+
+- name: Получение хостового IP из inventory
+  set_fact:
+    host_ip: "{{ hostvars[inventory_hostname].ansible_host }}"
+
+- name: Определение сетевого интерфейса для хостового IP
+  shell: |
+    ip route get {{ host_ip }} | awk '{print $5; exit}'
+  register: detected_interface
+  changed_when: false
+
+- name: Проверка на корректность определения интерфейса
+  fail:
+    msg: "Не удалось определить сетевой интерфейс для IP {{ host_ip }}"
+  when: detected_interface.stdout == ""
+
+- name: Убедимся, что интерфейс был определен
+  debug:
+    msg: "Интерфейс для IP {{ host_ip }}: {{ detected_interface.stdout }}"
+
+- name: Проверка наличия IPv6 на сервере
+  shell: ip -6 addr | grep -q 'inet6' && echo "yes" || echo "no"
+  register: ipv6_check
+  changed_when: false
+
+- name: Установка факта о наличии IPv6
+  set_fact:
+    ipv6_enabled: "{{ ipv6_check.stdout == 'yes' }}"
+
+- name: Определение шлюза для каждой подсети
+  shell: |
+    ip route | grep "{{ item.subnet }}" | awk '/via/ {print $3}'
+  register: gateway_check
+  changed_when: false
+  failed_when: gateway_check.stdout == ""
+  loop: "{{ networks }}"
+
+- name: Установка факта о шлюзе
+  set_fact:
+    network_gateways: "{{ network_gateways | default({}) | combine({item.item.name: item.stdout}) }}"
+  loop: "{{ gateway_check.results }}"
+
+- name: Вывод найденных шлюзов
+  debug:
+    msg: "Для сети {{ item.key }} найден шлюз: {{ item.value }}"
+  loop: "{{ network_gateways | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Создание Docker-сетей
+  command: >
+    docker network create
+    {% if network_type.stdout == 'nat' %}
+      -o "com.docker.network.bridge.enable_ip_masquerade"="false"
+      --driver bridge
+    {% elif network_type.stdout == 'vlan' %}
+      --driver macvlan
+    {% endif %}
+    --subnet={{ item.subnet }}
+    {% if ipv6_enabled and item.ipv6_subnet is defined and item.ipv6_subnet|length > 0 %}
+      --ipv6 --subnet={{ item.ipv6_subnet }}
+    {% endif %}
+    --gateway={{ network_gateways[item.name] }}
+    {% if network_type.stdout == 'vlan' %}
+      -o parent={{ detected_interface.stdout }}
+    {% endif %}
+    {{ item.name }}
+  loop: "{{ networks }}"
+  when: item.name in network_gateways

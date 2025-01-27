@@ -1,0 +1,7 @@
+- hosts: servers
+  become: yes
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+
+  roles:
+    - docker_network
