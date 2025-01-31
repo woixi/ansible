@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'nodes'
+    static_configs:
+      - targets:
+{% for host in groups['servers'] %}
+          - "{{ hostvars[host]['ansible_host'] }}:9100"
+{% endfor %}
+
+  - job_name: 'docker'
+    static_configs:
+      - targets:
+{% for host in groups['servers'] %}
+          - "{{ hostvars[host]['ansible_host'] }}:8080"
+{% endfor %}
