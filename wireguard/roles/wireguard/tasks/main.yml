@@ -106,6 +106,11 @@
       - "Config file: {{ wg_clients_path }}/{{ client_name }}.conf"
       - "Server public key: {{ server_public_key }}"
 
-- name: Show client config content for copying
+- name: Read client config from server
+  slurp:
+    src: "{{ client_config_path }}"
+  register: client_conf_encoded
+
+- name: Show client config
   debug:
-    msg: "{{ lookup('file', wg_clients_path ~ '/' ~ client_name ~ '.conf') }}"
+    msg: "{{ client_conf_encoded.content | b64decode }}"
