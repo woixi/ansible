@@ -1,0 +1,111 @@
+---
+- name: Ensure clients directory exists
+  file:
+    path: "{{ wg_clients_path }}"
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Fail if client_name not provided
+  assert:
+    that: client_name is defined
+    fail_msg: "You must provide client_name (e.g. -e client_name=alice)"
+
+- name: Fail if neither client_private_key nor client_public_key provided
+  assert:
+    that:
+      - client_private_key is defined or client_public_key is defined
+    fail_msg: "You must provide at least client_private_key or client_public_key"
+
+- name: Generate client private key if not provided
+  command: wg genkey
+  register: client_privkey
+  changed_when: false
+  when: client_private_key is not defined
+
+- name: Set client_private_key fact
+  set_fact:
+    client_private_key: "{{ client_private_key | default(client_privkey.stdout) }}"
+
+- name: Generate client public key if not provided
+  shell: echo "{{ client_private_key }}" | wg pubkey
+  register: client_pubkey
+  changed_when: false
+  when: client_public_key is not defined
+
+- name: Set client_public_key fact
+  set_fact:
+    client_public_key: "{{ client_public_key | default(client_pubkey.stdout) }}"
+
+- name: Get server public key
+  command: wg show {{ wg_interface }} public-key
+  register: server_pubkey_cmd
+  changed_when: false
+
+- name: Set server_public_key fact
+  set_fact:
+    server_public_key: "{{ server_pubkey_cmd.stdout }}"
+
+- name: Set server_endpoint fact if not defined
+  set_fact:
+    server_endpoint: "{{ server_endpoint | default(ansible_default_ipv4.address ~ ':' ~ wg_port) }}"
+
+- name: Find free IP in wg_network
+  shell: |
+    for i in $(seq 10 249); do
+      grep -qE "AllowedIPs[[:space:]]*=[[:space:]]*{{ wg_network.split('/')[0].split('.')[:3] | join('.') }}.${i}(/|$)" "{{ wg_config_path }}" || { echo $i; exit 0; }
+    done
+  args:
+    executable: /bin/bash
+  register: free_octet
+  changed_when: false
+
+- name: Set client IP
+  set_fact:
+    client_ip: "{{ wg_network.split('/')[0].split('.')[:3] | join('.') }}.{{ free_octet.stdout }}"
+
+- name: Add peer via wg command
+  command: wg set {{ wg_interface }} peer {{ client_public_key }} allowed-ips {{ client_ip }}/32
+
+- name: Persist peer in wg config
+  blockinfile:
+    path: "{{ wg_config_path }}"
+    block: |
+      # peer {{ client_name }} added by ansible
+      [Peer]
+      PublicKey = {{ client_public_key }}
+      AllowedIPs = {{ client_ip }}/32
+    insertafter: EOF
+    create: yes
+    marker: "# {mark} ANSIBLE MANAGED BLOCK for {{ client_name }}"
+
+- name: Restart WireGuard
+  systemd:
+    name: wg-quick@{{ wg_interface }}
+    state: restarted
+
+- name: Create client config from template
+  template:
+    src: client.conf.j2
+    dest: "{{ wg_clients_path }}/{{ client_name }}.conf"
+    mode: '0600'
+    owner: root
+    group: root
+  vars:
+    client_private_key: "{{ client_private_key }}"
+    client_ip: "{{ client_ip }}"
+    server_public_key: "{{ server_public_key }}"
+    server_endpoint: "{{ server_endpoint }}"
+
+- name: Show info for the new client
+  debug:
+    msg:
+      - "Client {{ client_name }} added successfully!"
+      - "IP address: {{ client_ip }}"
+      - "Config file: {{ wg_clients_path }}/{{ client_name }}.conf"
+      - "Server public key: {{ server_public_key }}"
+
+- name: Show client config content for copying
+  debug:
+    msg: "{{ lookup('file', wg_clients_path ~ '/' ~ client_name ~ '.conf') }}"

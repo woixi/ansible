@@ -1,0 +1,6 @@
+wg_interface: wg0
+wg_port: 51820
+wg_network: 10.130.0.0/24
+wg_config_path: /etc/wireguard/wg0.conf
+wg_clients_path: /etc/wireguard/clients
+
