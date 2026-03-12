@@ -107,4 +107,5 @@
 
 - name: Show client config
   debug:
-    msg: "{{ client_conf_encoded.content | b64decode }}"
+    msg: |
+      {{ client_conf_encoded.content | b64decode }}
