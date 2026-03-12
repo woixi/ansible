@@ -12,12 +12,6 @@
     that: client_name is defined
     fail_msg: "You must provide client_name (e.g. -e client_name=alice)"
 
-- name: Fail if neither client_private_key nor client_public_key provided
-  assert:
-    that:
-      - client_private_key is defined or client_public_key is defined
-    fail_msg: "You must provide at least client_private_key or client_public_key"
-
 - name: Generate client private key if not provided
   command: wg genkey
   register: client_privkey
@@ -108,7 +102,7 @@
 
 - name: Read client config from server
   slurp:
-    src: "{{ client_config_path }}"
+    src: "{{ wg_clients_path }}/{{ client_name }}.conf"
   register: client_conf_encoded
 
 - name: Show client config
